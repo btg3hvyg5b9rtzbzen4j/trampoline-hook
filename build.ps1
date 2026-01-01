@@ -1,0 +1,1 @@
+gcc main.c -o main.dll -shared -m64
