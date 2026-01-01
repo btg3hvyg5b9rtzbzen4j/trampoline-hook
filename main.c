@@ -5,6 +5,7 @@
 #include <d3d9.h>
 
 // Offset to IDirect3DDevice9::EndScene from d3d9.dll base
+// May differ for you, please use a debugger to find it yourself
 #define O_ENDSCENE 0x2BC20
 
 // Global variable to hold the trampoline function address
