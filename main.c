@@ -4,8 +4,10 @@
 #include <stdio.h>
 #include <d3d9.h>
 
+// Offset to IDirect3DDevice9::EndScene from d3d9.dll base
 #define O_ENDSCENE 0x2BC20
 
+// Global variable to hold the trampoline function address
 uintptr_t EndSceneTrampoline;
 
 void EndSceneHook(IDirect3DDevice9* pDevice) {
@@ -21,33 +23,42 @@ void EndSceneHook(IDirect3DDevice9* pDevice) {
 }
 
 uintptr_t TrampolineHook(uintptr_t aFuncToHook, uintptr_t aHookFunc, int nStolenBytes) {
+    // Ensure we have at least 12 bytes which is the size of a 64-bit absolute jump instruction
     if (nStolenBytes < 12) {
         printf("Not enough bytes stolen for hook\n");
         return 0;
     }
 
-    // Create the trampoline function which will restore the stolen bytes and jump back to the original function
+    // Create the trampoline function which will execute the stolen bytes and jump back to the original function
     // We allocate nStolenBytes + 12 for the jump instruction
     uintptr_t aTrampoline = (uintptr_t)VirtualAlloc(0, nStolenBytes + 12, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-    memcpy((char*)aTrampoline, (char*)aFuncToHook, nStolenBytes);
     
-    printf("Trampoline allocated at: 0x%llX\n", aTrampoline);
+    if (!aTrampoline) {
+        printf("VirtualAlloc failed\n");
+        return 0;
+    } else {
+        printf("Trampoline allocated at: 0x%llX\n", aTrampoline);
+    }
+
+    // Copy the bytes that will be overwritten by the jump to our hook function
+    memcpy((char*)aTrampoline, (char*)aFuncToHook, nStolenBytes);
 
     // Create the absolute jump instruction and populate it with the address to jump back to
-    // The address to jump back to will be original + nStolenBytes
+    // The address to jump back to will be original + nStolenBytes (so we continue normal execution after our hook)
     char jmpBack[12] = {
         0x48, 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // mov rax, <address>
         0xFF, 0xE0                                                  // jmp rax
     };
     *(uintptr_t*)(jmpBack + 2) = aFuncToHook + nStolenBytes;
     memcpy((char*)(aTrampoline + nStolenBytes), jmpBack, sizeof(jmpBack));
-
+    
     printf("Jump back instruction written at: 0x%llX\n", aTrampoline + nStolenBytes);
 
     // Patch the original function with the jump to our hook
     DWORD oldProtect;
     VirtualProtect((LPVOID)aFuncToHook, nStolenBytes, PAGE_EXECUTE_READWRITE, &oldProtect);
 
+    // Again create a jump instruction, this time to our hook function
     char jmpHook[12] = {
         0x48, 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // mov rax, <address>
         0xFF, 0xE0                                                  // jmp rax
@@ -58,6 +69,7 @@ uintptr_t TrampolineHook(uintptr_t aFuncToHook, uintptr_t aHookFunc, int nStolen
     printf("Hook instruction written at: 0x%llX\n", aFuncToHook);
 
     // Fill the remaining bytes with NOPs if any
+    // This ensures we don't leave any partial instructions and corrupt the original function
     for (int i = 12; i < nStolenBytes; i++) {
         *((char*)aFuncToHook + i) = 0x90;
     }
